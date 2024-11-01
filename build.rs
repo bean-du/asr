@@ -1,27 +1,25 @@
 use std::process::Command;
-use std::env;
-use std::path::Path;
 
 fn main() {
-    let out_dir = env::var("OUT_DIR").unwrap();
-    let metal_src = Path::new("/Users/douxiangbin/Documents/projects/whisper.cpp/ggml/src");
-    let metal_lib = Path::new(&out_dir).join("default.metallib");
-
-    // 编译 Metal 文件
-    Command::new("xcrun")
-        .args(&["-sdk", "macosx", "metal", "-c", 
-                metal_src.to_str().unwrap(),
-                "-o", &format!("{}/ggml-metal.air", out_dir)])
-        .status()
+    // 获取 git 版本信息
+    let output = Command::new("git")
+        .args(&["describe", "--tags", "--always", "--dirty"])
+        .output()
         .unwrap();
-
-    Command::new("xcrun")
-        .args(&["-sdk", "macosx", "metallib", 
-                &format!("{}/ggml-metal.air", out_dir),
-                "-o", metal_lib.to_str().unwrap()])
-        .status()
-        .unwrap();
-
-    println!("cargo:rustc-env=GGML_METAL_PATH_RESOURCES={}", out_dir);
-    println!("cargo:rerun-if-changed={}", metal_src.to_str().unwrap());
+    let git_hash = String::from_utf8(output.stdout).unwrap();
+    
+    // 将版本信息传递给编译器
+    println!("cargo:rustc-env=GIT_HASH={}", git_hash);
+    
+    // 确保 ffmpeg 可用
+    let ffmpeg_check = Command::new("ffmpeg")
+        .arg("-version")
+        .output();
+    
+    if ffmpeg_check.is_err() {
+        println!("cargo:warning=ffmpeg not found in PATH, some features may not work");
+    }
+    
+    // 设置链接配置
+    println!("cargo:rustc-link-search=native=/usr/lib/x86_64-linux-gnu");
 }

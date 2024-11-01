@@ -29,6 +29,9 @@ impl WhisperAsr {
         // 设置使用的线程数，提高并行处理能力
         params.set_n_threads(8);
 
+        // 设置打印进度
+        params.set_print_progress(true);
+
         // 设置音频上下文大小，提高识别准确度
         // params.set_audio_ctx(600);
 
