@@ -1,26 +1,41 @@
 use async_trait::async_trait;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use sqlx::{SqlitePool, Row};
+use sea_orm::{
+    DatabaseConnection, EntityTrait, QueryFilter, ColumnTrait, QueryOrder,
+    QuerySelect, Condition, ConnectionTrait, DbBackend, Statement,
+    ActiveModelTrait, Set, IntoActiveModel,
+};
+use crate::web::Pagination;
 use tracing::info;
+use crate::schedule::types::TaskStatus;
+use sea_query;
 
 use super::TaskStorage;
-use crate::schedule::types::{Task, TaskStatus};
+use super::entity::{self, Model as TaskModel};
+use sea_orm::{ConnectOptions, Database};
 
 pub struct SqliteTaskStorage {
-    pool: SqlitePool,
+    db: DatabaseConnection,
 }
 
 impl SqliteTaskStorage {
     pub async fn new(database_url: &str) -> Result<Self> {
         info!("Initializing SQLite task storage at {}", database_url);
-        let pool = sqlx::SqlitePool::connect(database_url).await?;
+
+        // 直接创建 ConnectOptions 并配置
+        let db = Database::connect(
+            ConnectOptions::new(database_url.to_owned())
+                .sqlx_logging(false)
+                .to_owned()
+        ).await?;
         
-        // 创建任务表
-        sqlx::query(
+        // 使用原生 SQL 创建表
+        db.execute(Statement::from_string(
+            DbBackend::Sqlite,
             r#"
             CREATE TABLE IF NOT EXISTS tasks (
-                id TEXT PRIMARY KEY,
+                id TEXT PRIMARY KEY NOT NULL,
                 status TEXT NOT NULL,
                 config TEXT NOT NULL,
                 created_at TEXT NOT NULL,
@@ -30,223 +45,146 @@ impl SqliteTaskStorage {
                 result TEXT,
                 error TEXT,
                 priority INTEGER NOT NULL,
-                retry_count INTEGER NOT NULL DEFAULT 0
+                retry_count INTEGER NOT NULL,
+                max_retries INTEGER NOT NULL,
+                timeout INTEGER
             )
-            "#,
-        )
-        .execute(&pool)
+            "#.to_owned(),
+        ))
         .await?;
 
-        Ok(Self { pool })
-    }
-
-    fn row_to_task(&self, row: sqlx::sqlite::SqliteRow) -> Result<Task> {
-        let config: String = row.get("config");
-        let config = serde_json::from_str(&config)?;
-        
-        let result: Option<String> = row.get("result");
-        let result = result.map(|r| serde_json::from_str(&r)).transpose()?;
-
-        Ok(Task {
-            id: row.get("id"),
-            status: serde_json::from_str(row.get("status"))?,
-            config,
-            created_at: DateTime::parse_from_rfc3339(row.get("created_at"))?.with_timezone(&Utc),
-            updated_at: DateTime::parse_from_rfc3339(row.get("updated_at"))?.with_timezone(&Utc),
-            started_at: row.get::<Option<String>, _>("started_at")
-                .map(|t| DateTime::parse_from_rfc3339(&t))
-                .transpose()?
-                .map(|t| t.with_timezone(&Utc)),
-            completed_at: row.get::<Option<String>, _>("completed_at")
-                .map(|t| DateTime::parse_from_rfc3339(&t))
-                .transpose()?
-                .map(|t| t.with_timezone(&Utc)),
-            result,
-            error: row.get("error"),
-        })
+        Ok(Self { db })
     }
 }
 
 #[async_trait]
 impl TaskStorage for SqliteTaskStorage {
-    async fn save_task(&self, task: &Task) -> Result<()> {
-        let config = serde_json::to_string(&task.config)?;
-        let result = task.result.as_ref().map(serde_json::to_string).transpose()?;
-        let priority = task.config.priority.clone();
-        
-        sqlx::query(
-            r#"
-            INSERT INTO tasks 
-            (id, status, config, created_at, updated_at, started_at, completed_at, result, error, priority, retry_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(&task.id)
-        .bind(serde_json::to_string(&task.status)?)
-        .bind(&config)
-        .bind(task.created_at.to_rfc3339())
-        .bind(task.updated_at.to_rfc3339())
-        .bind(task.started_at.map(|t| t.to_rfc3339()))
-        .bind(task.completed_at.map(|t| t.to_rfc3339()))
-        .bind(result)
-        .bind(&task.error)
-        .bind(priority as i32)
-        .bind(task.config.retry_count)
-        .execute(&self.pool)
-        .await?;
-
+    async fn create(&self, model: &TaskModel) -> Result<()> {
+        let active_model = model.clone().into_active_model();
+        entity::Entity::insert(active_model)
+            .on_conflict(
+                sea_query::OnConflict::column(entity::Column::Id)
+                    .update_columns([
+                        entity::Column::UpdatedAt,
+                        entity::Column::Status,
+                        entity::Column::StartedAt,
+                        entity::Column::CompletedAt,
+                        entity::Column::Result,
+                        entity::Column::Error,
+                    ])
+                    .to_owned()
+            )
+            .exec(&self.db)
+            .await?;
         Ok(())
     }
     
-    async fn get_all_tasks(&self) -> Result<Vec<Task>> {
-        let rows = sqlx::query("SELECT * FROM tasks")
-            .fetch_all(&self.pool)
+    async fn list(&self, pagination: &Pagination) -> Result<Vec<TaskModel>> {
+        let pagination = pagination.check();
+
+        let models = entity::Entity::find()
+            .order_by_asc(entity::Column::CreatedAt)
+            .limit(pagination.limit())
+            .offset(pagination.offset())
+            .all(&self.db)
             .await?;
-            
-        let mut tasks = Vec::new();
-        for row in rows {
-            tasks.push(self.row_to_task(row)?);
-        }
-        Ok(tasks)
+        Ok(models)
     }
 
-    async fn get_pending_tasks(&self, limit: usize) -> Result<Vec<Task>> {
-        let rows = sqlx::query(
-            r#"
-            SELECT * FROM tasks 
-            WHERE status = 'Pending'
-            ORDER BY 
-                CASE priority 
-                    WHEN 'Critical' THEN 1
-                    WHEN 'High' THEN 2
-                    WHEN 'Normal' THEN 3
-                    WHEN 'Low' THEN 4
-                END,
-                created_at ASC
-            LIMIT ?
-            "#,
-        )
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut tasks = Vec::new();
-        for row in rows {
-            tasks.push(self.row_to_task(row)?);
-        }
-
-        Ok(tasks)
-    }
-
-    async fn get_task(&self, task_id: &str) -> Result<Option<Task>> {
-        let row = sqlx::query("SELECT * FROM tasks WHERE id = ?")
-            .bind(task_id)
-            .fetch_optional(&self.pool)
+    async fn get_pending_by_priority(&self, limit: usize) -> Result<Vec<TaskModel>> {
+        let pending_status = serde_json::to_string(&TaskStatus::Pending)?;
+        let models = entity::Entity::find()
+            .filter(entity::Column::Status.eq(pending_status))
+            .order_by_asc(entity::Column::Priority)
+            .order_by_asc(entity::Column::CreatedAt)
+            .limit(limit as u64)
+            .all(&self.db)
             .await?;
-            
-        Ok(match row {
-            Some(row) => Some(self.row_to_task(row)?),
-            None => None,
-        })
+        Ok(models)
     }
 
-    async fn update_task_status(&self, task_id: &str, status: TaskStatus) -> Result<()> {
-        let status_str = serde_json::to_string(&status)?;
-        let now = Utc::now().to_rfc3339();
+    async fn get(&self, task_id: &str) -> Result<Option<TaskModel>> {
+        Ok(entity::Entity::find_by_id(task_id)
+            .one(&self.db)
+            .await?)
+    }
 
-        sqlx::query(
-            r#"
-            UPDATE tasks 
-            SET status = ?, 
-                updated_at = ?,
-                started_at = CASE 
-                    WHEN ? = 'Processing' AND started_at IS NULL 
-                    THEN ? 
-                    ELSE started_at 
-                END,
-                completed_at = CASE 
-                    WHEN ? = 'Completed' 
-                    THEN ? 
-                    ELSE completed_at 
-                END
-            WHERE id = ?
-            "#
-        )
-        .bind(&status_str)
-        .bind(&now)
-        .bind(&status_str)
-        .bind(&now)
-        .bind(&status_str)
-        .bind(&now)
-        .bind(task_id)
-        .execute(&self.pool)
-        .await?;
-
+    async fn update(&self, task_id: &str, status: &str) -> Result<()> {
+        let now = Utc::now();
+        if let Some(model) = entity::Entity::find_by_id(task_id).one(&self.db).await? {
+            let mut active_model = model.into_active_model();
+            active_model.status = Set(status.to_string());
+            active_model.updated_at = Set(now);
+            
+            if status == serde_json::to_string(&TaskStatus::Processing)? {
+                active_model.started_at = Set(Some(now));
+            }
+            if status == serde_json::to_string(&TaskStatus::Completed)? {
+                active_model.completed_at = Set(Some(now));
+            }
+            
+            active_model.update(&self.db).await?;
+        }
         Ok(())
     }
 
-    async fn delete_task(&self, task_id: &str) -> Result<()> {
-        sqlx::query("DELETE FROM tasks WHERE id = ?")
-            .bind(task_id)
-            .execute(&self.pool)
+    async fn delete(&self, task_id: &str) -> Result<()> {
+        entity::Entity::delete_by_id(task_id)
+            .exec(&self.db)
             .await?;
-
         Ok(())
     }
 
-    async fn get_timed_out_tasks(&self) -> Result<Vec<Task>> {
+    async fn get_timeouted(&self) -> Result<Vec<TaskModel>> {
         let processing_status = serde_json::to_string(&TaskStatus::Processing)?;
+        let now = Utc::now().timestamp();
         
-        let rows = sqlx::query(
-            r#"
-            SELECT * FROM tasks 
-            WHERE status = ? 
-            AND started_at IS NOT NULL 
-            AND (strftime('%s', 'now') - strftime('%s', started_at)) > timeout
-            "#
-        )
-        .bind(processing_status)
-        .fetch_all(&self.pool)
-        .await?;
+        // 使用原生 SQL 来处理时间比较
+        let statement = Statement::from_string(
+            DbBackend::Sqlite,
+            format!(
+                r#"
+                SELECT * FROM tasks 
+                WHERE status = '{}'
+                AND started_at IS NOT NULL 
+                AND timeout IS NOT NULL
+                AND (strftime('%s', started_at) + timeout) < {}
+                "#,
+                processing_status, now
+            ),
+        );
 
-        let mut tasks = Vec::new();
-        for row in rows {
-            tasks.push(self.row_to_task(row)?);
-        }
-
-        Ok(tasks)
-    }
-
-    async fn cleanup_old_tasks(&self, before: DateTime<Utc>) -> Result<u64> {
-        let result = sqlx::query(
-            r#"
-            DELETE FROM tasks 
-            WHERE (status = 'Completed' OR status LIKE 'Failed%')
-            AND updated_at < ?
-            "#
-        )
-        .bind(before.to_rfc3339())
-        .execute(&self.pool)
-        .await?;
-
-        Ok(result.rows_affected())
-    }
-
-    async fn get_tasks_by_status(&self, status: TaskStatus) -> Result<Vec<Task>> {
-        let status_str = serde_json::to_string(&status)?;
+        let models = entity::Entity::find()
+            .from_raw_sql(statement)
+            .all(&self.db)
+            .await?;
         
-        let rows = sqlx::query(
-            "SELECT * FROM tasks WHERE status = ? ORDER BY priority DESC, created_at ASC"
-        )
-        .bind(status_str)
-        .fetch_all(&self.pool)
-        .await?;
-
-        let mut tasks = Vec::new();
-        for row in rows {
-            tasks.push(self.row_to_task(row)?);
-        }
-
-        Ok(tasks)
+        Ok(models)
     }
-} 
+
+    async fn cleanup_old(&self, before: DateTime<Utc>) -> Result<u64> {
+        let condition = Condition::any()
+            .add(entity::Column::Status.contains("Completed"))
+            .add(entity::Column::Status.contains("Failed"));
+
+        let result = entity::Entity::delete_many()
+            .filter(condition)
+            .filter(entity::Column::UpdatedAt.lt(before))
+            .exec(&self.db)
+            .await?;
+
+        Ok(result.rows_affected)
+    }
+
+    async fn get_by_status(&self, status: &str) -> Result<Vec<TaskModel>> {
+        let models = entity::Entity::find()
+            .filter(entity::Column::Status.eq(status))
+            .order_by_desc(entity::Column::Priority)
+            .order_by_asc(entity::Column::CreatedAt)
+            .all(&self.db)
+            .await?;
+        
+        Ok(models)
+    }
+}
+

@@ -21,19 +21,6 @@ pub enum AudioFormat {
     Flac,
 }
 
-pub struct Audio {
-    format: AudioFormat,
-    sample_rate: u32,
-    channels: usize,
-    samples: Vec<f32>,
-}
-
-impl Audio {
-    pub fn new(format: AudioFormat, sample_rate: u32, channels: usize, samples: Vec<f32>) -> Self {
-        Self { format, sample_rate, channels, samples }
-    }   
-}
-
 /// 解析音频文件并进行预处理
 /// 
 /// 该函数读取音频文件，将其转换为WAV格式（如果需要），然后将其转换为单声道、归一化，并进行一系列预处理步骤
@@ -54,14 +41,16 @@ impl Audio {
 /// 7. 应用噪声门限
 /// 8. 如果需要，重采样到16kHz
 pub fn parse_audio_file(path: &Path, enable_noise_reduction: bool, noise_reduction_strength: f32) -> Result<Vec<f32>> {
-    let wav_path = ensure_wav_format(path);
-    let (samples, num_channels, sample_rate) = read_wav_file(&wav_path);
+    let wav_path = ensure_wav_format(path)?;
+    let (samples, num_channels, sample_rate) = read_wav_file(&wav_path)?;
     
     // 如果转换了文件，删除临时的WAV文件
     if wav_path != path {
-        match fs::remove_file(wav_path.clone()) {
-            Ok(_) => info!("Removed temporary WAV file: {:?}", wav_path),
-            Err(e) => error!("Failed to remove temporary WAV file: {:?}", e),
+        if let Err(e) = fs::remove_file(&wav_path) {
+            error!("Failed to remove temporary WAV file: {}", e);
+            // 继续执行，不要因为清理临时文件失败而中断整个处理流程
+        } else {
+            info!("Removed temporary WAV file: {:?}", wav_path);
         }
     }
 
@@ -79,7 +68,7 @@ pub fn parse_audio_file(path: &Path, enable_noise_reduction: bool, noise_reducti
     if sample_rate != 16000 {
         Ok(resample_audio(&gated_samples, sample_rate))
     } else {
-        println!("Sample rate is already 16000 Hz, no resampling needed.");
+        info!("Sample rate is already 16000 Hz, no resampling needed.");
         Ok(gated_samples)
     }
 }
@@ -96,15 +85,15 @@ pub fn parse_audio_file(path: &Path, enable_noise_reduction: bool, noise_reducti
 /// 
 /// # 注意
 /// 此函数依赖于系统中安装的FFmpeg
-fn ensure_wav_format(path: &Path) -> std::path::PathBuf {
+fn ensure_wav_format(path: &Path) -> Result<std::path::PathBuf> {
     if let Some(extension) = path.extension() {
-        if extension.to_str().unwrap().to_lowercase() == "wav" {
-            return path.to_path_buf();
+        if extension.to_str().unwrap_or("").to_lowercase() == "wav" {
+            return Ok(path.to_path_buf());
         }
     }
 
     let output_path = path.with_extension("wav");
-    println!("Converting audio file to WAV format...");
+    info!("Converting audio file to WAV format...");
     
     let status = Command::new("ffmpeg")
         .arg("-i")
@@ -115,13 +104,13 @@ fn ensure_wav_format(path: &Path) -> std::path::PathBuf {
         .arg("44100")
         .arg(&output_path)
         .status()
-        .expect("Failed to execute ffmpeg");
+        .map_err(|e| anyhow::anyhow!("Failed to execute ffmpeg: {}", e))?;
 
     if !status.success() {
-        panic!("Failed to convert audio file to WAV format");
+        return Err(anyhow::anyhow!("FFmpeg conversion failed with status: {}", status));
     }
 
-    output_path
+    Ok(output_path)
 }
 
 /// 读取WAV文件
@@ -136,31 +125,35 @@ fn ensure_wav_format(path: &Path) -> std::path::PathBuf {
 /// 
 /// # Panics
 /// 如果文件格式不符合预期（非整数样本格式或非16位样本），函数会panic
-fn read_wav_file(path: &Path) -> (Vec<f32>, usize, u32) {
-    let mut reader = WavReader::open(path).expect("failed to read file");
+fn read_wav_file(path: &Path) -> Result<(Vec<f32>, usize, u32)> {
+    let mut reader = WavReader::open(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read WAV file: {}", e))?;
+    
     let num_channels = reader.spec().channels as usize;
     let sample_rate = reader.spec().sample_rate;
 
     if reader.spec().sample_format != SampleFormat::Int {
-        panic!("expected integer sample format");
+        return Err(anyhow::anyhow!("Unsupported sample format: expected integer format"));
     }
 
     if reader.spec().bits_per_sample != 16 {
-        panic!("expected 16 bits per sample");
+        return Err(anyhow::anyhow!("Unsupported bits per sample: expected 16 bits"));
     }
 
-    println!("Original sample rate: {} Hz", sample_rate);
+    info!("Original sample rate: {} Hz", sample_rate);
 
-    let samples: Vec<f32> = reader.samples::<i16>()
-        .map(|s| s.unwrap() as f32)
-        .collect();
+    let samples: Vec<f32> = reader
+        .samples::<i16>()
+        .map(|s| s.map(|val| val as f32))
+        .collect::<std::result::Result<Vec<f32>, _>>()
+        .map_err(|e| anyhow::anyhow!("Failed to read samples: {}", e))?;
 
-    (samples, num_channels, sample_rate)
+    Ok((samples, num_channels, sample_rate))
 }
 
 /// 将多声道音频转换为单声道
 /// 
-/// 通过对每个采样���的所有通道取平均值，将多声道音频转换为单声道
+/// 通过对每个采样的所有通道取平均值，将多声道音频转换为单声道
 /// 
 /// # 参数
 /// * `samples` - 输入的音频样本
@@ -432,9 +425,9 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn test_spectral_noise_reduction() {
+    fn test_spectral_noise_reduction() -> Result<()> {
         let input_path = Path::new("./test/1.wav");
-        let (samples, num_channels, sample_rate) = read_wav_file(input_path);
+        let (samples, num_channels, sample_rate) = read_wav_file(input_path)?;
 
         println!("Original signal stats: min={}, max={}, mean={}", 
                  samples.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
@@ -474,5 +467,7 @@ mod tests {
         let max = denoised.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
         let mean = denoised.iter().sum::<f32>() / denoised.len() as f32;
         println!("Denoised stats - Min: {}, Max: {}, Mean: {}", min, max, mean);
+
+        Ok(())
     }
 }

@@ -1,3 +1,5 @@
+#![warn(dead_code)]
+
 use axum::{
     extract::State,
     http::StatusCode,
@@ -110,6 +112,7 @@ async fn get_key_stats(
         ),
     }
 }
+
 
 async fn get_key_usage_report(
     State(auth): State<Arc<Auth>>,

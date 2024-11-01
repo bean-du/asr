@@ -1,0 +1,617 @@
+openapi: 3.1.0
+info:
+  title: ASR Service API
+  description: API for Audio Speech Recognition and Task Management
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:7200
+    description: Local development server
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+
+  schemas:
+    HttpResponse:
+      type: object
+      required:
+        - code
+        - message
+        - data
+      properties:
+        code:
+          type: integer
+          description: Response code (0 for success)
+        message:
+          type: string
+          description: Response message
+        data:
+          type: string
+          description: Response data
+
+    ApiResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+        error:
+          type: string
+
+    TranscribeRequest:
+      type: object
+      required:
+        - audio_url
+        - callback_url
+      properties:
+        audio_url:
+          type: string
+          description: URL of the audio file to transcribe
+        callback_url:
+          type: string
+          description: URL to receive transcription results
+        language:
+          type: string
+          nullable: true
+          description: Target language for transcription
+        speaker_diarization:
+          type: boolean
+          default: false
+          description: Enable speaker diarization
+        emotion_recognition:
+          type: boolean
+          default: false
+          description: Enable emotion recognition
+        filter_dirty_words:
+          type: boolean
+          default: false
+          description: Enable dirty words filtering
+
+    Permission:
+      type: string
+      enum: [Transcribe]
+      description: Available permissions for API keys
+
+    RateLimit:
+      type: object
+      required:
+        - requests_per_minute
+        - burst_size
+      properties:
+        requests_per_minute:
+          type: integer
+          minimum: 1
+          description: Maximum number of requests allowed per minute
+        burst_size:
+          type: integer
+          minimum: 1
+          description: Maximum burst size for rate limiting
+
+    CreateApiKeyRequest:
+      type: object
+      required:
+        - name
+        - permissions
+        - rate_limit
+      properties:
+        name:
+          type: string
+          description: Name of the API key
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Permission'
+          description: List of permissions for the API key
+        rate_limit:
+          $ref: '#/components/schemas/RateLimit'
+        expires_in_days:
+          type: integer
+          nullable: true
+          description: Number of days until the API key expires
+
+    ApiKeyInfo:
+      type: object
+      required:
+        - api_key
+        - name
+        - permissions
+        - rate_limit
+        - created_at
+      properties:
+        api_key:
+          type: string
+          description: The generated API key
+        name:
+          type: string
+          description: Name of the API key
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Permission'
+        rate_limit:
+          $ref: '#/components/schemas/RateLimit'
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    TaskParams:
+      oneOf:
+        - type: object
+          required:
+            - type
+            - params
+          properties:
+            type:
+              type: string
+              enum: [Transcribe]
+            params:
+              type: object
+              properties:
+                language:
+                  type: string
+                  nullable: true
+                speaker_diarization:
+                  type: boolean
+                  default: false
+                emotion_recognition:
+                  type: boolean
+                  default: false
+                filter_dirty_words:
+                  type: boolean
+                  default: false
+
+    TaskConfig:
+      type: object
+      required:
+        - task_type
+        - input_path
+        - callback_type
+        - params
+        - priority
+        - max_retries
+      properties:
+        task_type:
+          type: string
+          enum: [Transcribe]
+        input_path:
+          type: string
+          description: Path to the input audio file
+        callback_type:
+          $ref: '#/components/schemas/CallbackType'
+        params:
+          $ref: '#/components/schemas/TaskParams'
+        priority:
+          type: string
+          enum: [Low, Normal, High]
+        retry_count:
+          type: integer
+          default: 0
+        max_retries:
+          type: integer
+          default: 3
+        timeout:
+          type: integer
+          nullable: true
+          description: Task timeout in seconds
+
+    Task:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [Pending, Processing, Completed, Failed]
+        config:
+          $ref: '#/components/schemas/TaskConfig'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        result:
+          type: object
+          nullable: true
+        error:
+          type: object
+          nullable: true
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+
+    UpdatePriorityRequest:
+      type: object
+      required:
+        - priority
+      properties:
+        priority:
+          type: string
+          enum: [Low, Normal, High]
+
+    Error:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          description: Error message
+        error_code:
+          type: string
+          description: Error code for client reference
+
+    ValidationError:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          description: Validation error message
+        fields:
+          type: object
+          description: Field-specific validation errors
+          additionalProperties:
+            type: string
+
+    CallbackType:
+      oneOf:
+        - type: object
+          required:
+            - type
+            - config
+          properties:
+            type:
+              type: string
+              enum: [Http]
+            config:
+              type: object
+              required:
+                - url
+              properties:
+                url:
+                  type: string
+                  format: uri
+        - type: object
+          required:
+            - type
+            - config
+          properties:
+            type:
+              type: string
+              enum: [Function]
+            config:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+        - type: object
+          required:
+            - type
+          properties:
+            type:
+              type: string
+              enum: [Event]
+            config:
+              type: object
+        - type: object
+          required:
+            - type
+          properties:
+            type:
+              type: string
+              enum: [None]
+            config:
+              type: object
+
+paths:
+  /asr/transcribe:
+    post:
+      summary: Create a new transcription task
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TranscribeRequest'
+      responses:
+        '200':
+          description: Task created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HttpResponse'
+        '401':
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HttpResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HttpResponse'
+
+  /auth/api-keys:
+    post:
+      summary: Create a new API key
+      description: Creates a new API key with specified permissions and rate limits
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApiKeyRequest'
+            example:
+              name: "My API Key"
+              permissions: ["Transcribe"]
+              rate_limit:
+                requests_per_minute: 60
+                burst_size: 10
+              expires_in_days: 30
+      responses:
+        '201':
+          description: API key created successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          key_info:
+                            $ref: '#/components/schemas/ApiKeyInfo'
+              example:
+                success: true
+                data:
+                  key_info:
+                    api_key: "sk-xxxxxxxxxxxxxxxxxxxx"
+                    name: "My API Key"
+                    permissions: ["Transcribe"]
+                    rate_limit:
+                      requests_per_minute: 60
+                      burst_size: 10
+                    created_at: "2024-03-15T10:00:00Z"
+                    expires_at: "2024-04-14T10:00:00Z"
+                error: null
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                success: false
+                data: null
+                error: "Invalid rate limit configuration"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                success: false
+                data: null
+                error: "Internal server error"
+
+  /auth/api-keys/{api_key}:
+    delete:
+      summary: Revoke an API key
+      description: Revokes (deletes) an existing API key
+      parameters:
+        - name: api_key
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The API key to revoke
+      responses:
+        '200':
+          description: API key revoked successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                success: true
+                data: null
+                error: null
+        '404':
+          description: API key not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiResponse'
+              example:
+                success: false
+                data: null
+                error: "API key not found"
+
+  /schedule/tasks:
+    post:
+      summary: Create a new task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskConfig'
+            example:
+              task_type: "Transcribe"
+              input_path: "/data/uploads/meeting.mp3"
+              callback_type:
+                type: "http"
+                url: "https://api.example.com/webhook/transcribe"
+              params:
+                language: "zh"
+                speaker_diarization: true
+                emotion_recognition: true
+                filter_dirty_words: false
+              priority: "Normal"
+              max_retries: 3
+              timeout: 3600
+      responses:
+        '201':
+          description: Task created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /schedule/tasks/{task_id}:
+    get:
+      summary: Get task details
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Task details retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                success: false
+                error: "Task not found"
+                error_code: "TASK_001"
+
+  /schedule/tasks/{task_id}/status:
+    get:
+      summary: Get task status
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Task status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+              examples:
+                pending:
+                  value:
+                    id: "123e4567-e89b-12d3-a456-426614174000"
+                    status: "Pending"
+                    config: {
+                      # ... (task config details)
+                    }
+                    created_at: "2024-03-15T10:00:00Z"
+                    updated_at: "2024-03-15T10:00:00Z"
+                processing:
+                  value:
+                    id: "123e4567-e89b-12d3-a456-426614174000"
+                    status: "Processing"
+                    config: {
+                      # ... (task config details)
+                    }
+                    created_at: "2024-03-15T10:00:00Z"
+                    updated_at: "2024-03-15T10:05:00Z"
+                    started_at: "2024-03-15T10:01:00Z"
+                completed:
+                  value:
+                    id: "123e4567-e89b-12d3-a456-426614174000"
+                    status: "Completed"
+                    config: {
+                      # ... (task config details)
+                    }
+                    created_at: "2024-03-15T10:00:00Z"
+                    updated_at: "2024-03-15T10:10:00Z"
+                    started_at: "2024-03-15T10:01:00Z"
+                    completed_at: "2024-03-15T10:10:00Z"
+                    result: {
+                      "text": "会议开始，今天我们讨论第一季度的销售情况...",
+                      "segments": [
+                        {
+                          "start": 0.0,
+                          "end": 3.5,
+                          "text": "会议开始",
+                          "speaker": "Speaker A",
+                          "emotion": "neutral"
+                        }
+                      ]
+                    }
+
+  /schedule/tasks/{task_id}/priority:
+    post:
+      summary: Update task priority
+      parameters:
+        - name: task_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePriorityRequest'
+      responses:
+        '200':
+          description: Task priority updated successfully
+        '400':
+          description: Bad request
+
+  /schedule/tasks/stats:
+    get:
+      summary: Get task statistics
+      responses:
+        '200':
+          description: Task statistics retrieved successfully
+        '500':
+          description: Internal server error 

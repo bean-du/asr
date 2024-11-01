@@ -1,0 +1,255 @@
+{
+  "asr": {
+    "transcribe": {
+      "request": {
+        "audio_url": "https://example.com/audio/meeting.mp3",
+        "callback_url": "https://api.example.com/webhook/transcribe",
+        "language": "zh",
+        "speaker_diarization": true,
+        "emotion_recognition": true,
+        "filter_dirty_words": false
+      },
+      "callback_response": {
+        "success": {
+          "task_id": "123e4567-e89b-12d3-a456-426614174000",
+          "status": "Completed",
+          "result": {
+            "text": "会议开始，今天我们讨论第一季度的销售情况...",
+            "segments": [
+              {
+                "start": 0.0,
+                "end": 3.5,
+                "text": "会议开始",
+                "speaker": "Speaker A",
+                "emotion": "neutral"
+              },
+              {
+                "start": 3.5,
+                "end": 10.2,
+                "text": "今天我们讨论第一季度的销售情况",
+                "speaker": "Speaker A",
+                "emotion": "positive"
+              }
+            ],
+            "metadata": {
+              "duration": 10.2,
+              "channels": 1,
+              "sample_rate": 16000,
+              "language": "zh",
+              "speakers": ["Speaker A"]
+            }
+          }
+        },
+        "error": {
+          "task_id": "123e4567-e89b-12d3-a456-426614174000",
+          "status": "Failed",
+          "error": {
+            "code": "ASR_003",
+            "message": "Audio file format not supported"
+          }
+        }
+      }
+    }
+  },
+  "task": {
+    "create": {
+      "request": {
+        "task_type": "Transcribe",
+        "input_path": "/data/uploads/meeting.mp3",
+        "callback_type": {
+          "type": "http",
+          "config": {
+            "url": "https://api.example.com/webhook/transcribe"
+          }
+        },
+        "params": {
+          "language": "zh",
+          "speaker_diarization": true,
+          "emotion_recognition": true,
+          "filter_dirty_words": false
+        },
+        "priority": "Normal",
+        "retry_count": 0,
+        "max_retries": 3,
+        "timeout": 3600
+      }
+    },
+    "status": {
+      "response": {
+        "pending": {
+          "success": true,
+          "data": {
+            "id": "123e4567-e89b-12d3-a456-426614174000",
+            "status": "Pending",
+            "config": {
+              "task_type": "Transcribe",
+              "input_path": "/data/uploads/meeting.mp3",
+              "callback_type": {
+                "type": "http",
+                "config": {
+                  "url": "https://api.example.com/webhook/transcribe"
+                }
+              },
+              "params": {
+                "language": "zh",
+                "speaker_diarization": true,
+                "emotion_recognition": true,
+                "filter_dirty_words": false
+              },
+              "priority": "Normal",
+              "retry_count": 0,
+              "max_retries": 3,
+              "timeout": 3600
+            },
+            "created_at": "2024-03-15T10:00:00Z",
+            "updated_at": "2024-03-15T10:00:00Z"
+          }
+        },
+        "processing": {
+          "success": true,
+          "data": {
+            "id": "123e4567-e89b-12d3-a456-426614174000",
+            "status": "Processing",
+            "config": {
+              "task_type": "Transcribe",
+              "input_path": "/data/uploads/meeting.mp3",
+              "callback_type": {
+                "type": "http",
+                "config": {
+                  "url": "https://api.example.com/webhook/transcribe"
+                }
+              },
+              "params": {
+                "language": "zh",
+                "speaker_diarization": true,
+                "emotion_recognition": true,
+                "filter_dirty_words": false
+              },
+              "priority": "Normal",
+              "retry_count": 0,
+              "max_retries": 3,
+              "timeout": 3600
+            },
+            "created_at": "2024-03-15T10:00:00Z",
+            "updated_at": "2024-03-15T10:05:00Z",
+            "started_at": "2024-03-15T10:01:00Z"
+          }
+        },
+        "completed": {
+          "success": true,
+          "data": {
+            "id": "123e4567-e89b-12d3-a456-426614174000",
+            "status": "Completed",
+            "config": {
+              "task_type": "Transcribe",
+              "input_path": "/data/uploads/meeting.mp3",
+              "callback_type": {
+                "type": "http",
+                "config": {
+                  "url": "https://api.example.com/webhook/transcribe"
+                }
+              },
+              "params": {
+                "language": "zh",
+                "speaker_diarization": true,
+                "emotion_recognition": true,
+                "filter_dirty_words": false
+              },
+              "priority": "Normal",
+              "retry_count": 0,
+              "max_retries": 3,
+              "timeout": 3600
+            },
+            "created_at": "2024-03-15T10:00:00Z",
+            "updated_at": "2024-03-15T10:10:00Z",
+            "started_at": "2024-03-15T10:01:00Z",
+            "completed_at": "2024-03-15T10:10:00Z",
+            "result": {
+              "text": "会议开始，今天我们讨论第一季度的销售情况...",
+              "segments": [
+                {
+                  "start": 0.0,
+                  "end": 3.5,
+                  "text": "会议开始",
+                  "speaker": "Speaker A",
+                  "emotion": "neutral"
+                }
+              ]
+            }
+          }
+        },
+        "failed": {
+          "success": true,
+          "data": {
+            "id": "123e4567-e89b-12d3-a456-426614174000",
+            "status": "Failed",
+            "config": {
+              "task_type": "Transcribe",
+              "input_path": "/data/uploads/meeting.mp3",
+              "callback_type": {
+                "type": "http",
+                "config": {
+                  "url": "https://api.example.com/webhook/transcribe"
+                }
+              },
+              "params": {
+                "language": "zh",
+                "speaker_diarization": true,
+                "emotion_recognition": true,
+                "filter_dirty_words": false
+              },
+              "priority": "Normal",
+              "retry_count": 3,
+              "max_retries": 3,
+              "timeout": 3600
+            },
+            "created_at": "2024-03-15T10:00:00Z",
+            "updated_at": "2024-03-15T10:01:00Z",
+            "started_at": "2024-03-15T10:00:30Z",
+            "error": {
+              "code": "ASR_003",
+              "message": "Audio file format not supported"
+            }
+          }
+        }
+      }
+    }
+  },
+  "auth": {
+    "create_api_key": {
+      "request": {
+        "name": "Production ASR Service",
+        "permissions": ["Transcribe"],
+        "rate_limit": {
+          "requests_per_minute": 60
+        },
+        "expires_in_days": 365
+      },
+      "response": {
+        "success": {
+          "success": true,
+          "data": {
+            "api_key": "sk_live_xxxxxxxxxxxxx",
+            "name": "Production ASR Service",
+            "permissions": ["Transcribe"],
+            "rate_limit": {
+              "requests_per_minute": 60
+            },
+            "created_at": "2024-03-15T10:00:00Z",
+            "expires_at": "2025-03-15T10:00:00Z"
+          }
+        },
+        "error": {
+          "validation_failed": {
+            "success": false,
+            "error": "Invalid request parameters",
+            "fields": {
+              "name": "Name is required",
+              "permissions": "At least one permission is required"
+            }
+          }
+        }
+      }
+    }
+  }
+} 

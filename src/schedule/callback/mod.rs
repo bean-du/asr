@@ -1,3 +1,5 @@
+#![warn(dead_code)]
+
 use async_trait::async_trait;
 use anyhow::Result;
 use serde::Serialize;

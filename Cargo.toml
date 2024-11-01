@@ -40,3 +40,12 @@ ndarray = "0.16.1"
 
 # database
 sqlx = { version = "0.8.2", features = ["runtime-tokio", "sqlite", "chrono"] }
+
+# sea-orm
+sea-orm = { version = "1.1.0", features = ["sqlx-sqlite", "runtime-tokio-native-tls", "macros"] }
+sea-query = "0.32.0"
+dotenv = "0.15.0"
+
+[dev-dependencies]
+tempfile = "3.2"
+uuid = { version = "1.0", features = ["v4"] }

@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
 use std::fmt::Display;
+
+
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum TaskType {
     Transcribe,
@@ -89,6 +91,27 @@ pub enum TaskStatus {
     Failed(String),
     Retrying,
     TimedOut,
+}
+
+impl TryFrom<String> for TaskStatus {
+    type Error = String;
+    fn try_from(status: String) -> Result<Self, Self::Error> {
+        match status.as_str() {
+            "Pending" => Ok(TaskStatus::Pending),
+            "Processing" => Ok(TaskStatus::Processing),
+            "Completed" => Ok(TaskStatus::Completed),
+            "Failed" => Ok(TaskStatus::Failed(String::new())),
+            "Retrying" => Ok(TaskStatus::Retrying),
+            "TimedOut" => Ok(TaskStatus::TimedOut),
+            _ => Err(format!("Invalid task status: {}", status)),
+        }
+    }
+}
+
+impl Display for TaskStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -20,7 +20,8 @@ use crate::schedule::TaskPriority;
 use crate::schedule::TaskParams;
 use crate::schedule::TranscribeParams;
 use serde::{Deserialize, Serialize};
-
+use crate::AUDIO_PATH;
+use std::fs;
 
 
 pub fn transcribe_router(ctx: Arc<AppContext>) -> Router {
@@ -59,15 +60,31 @@ pub async fn transcribe(
         return (StatusCode::UNAUTHORIZED, Json(response)).into_response();
     }
 
-    // download audio file
-    let dest = match download_audio(&req.audio_url, &PathBuf::from("./asr/data/")).await {
-        Ok(dest) => dest,
+    // ensure download directory exists
+    let download_dir = PathBuf::from(AUDIO_PATH.as_str());
+    if let Err(e) = fs::create_dir_all(&download_dir) {
+        error!("Failed to create download directory: {}", e);
+        let response = HttpResponse::new(
+            500,
+            "Failed to create download directory".to_string(),
+            e.to_string()
+        );
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(response)).into_response();
+    }
+
+    // download audio file with more detailed error logging
+    info!("Attempting to download audio from: {}", req.audio_url);
+    let dest = match download_audio(&req.audio_url, &download_dir).await {
+        Ok(dest) => {
+            info!("Successfully downloaded audio to: {:?}", dest);
+            dest
+        },
         Err(e) => {
-            error!("Failed to download audio: {}", e);
+            error!("Failed to download audio from {}: {}", req.audio_url, e);
             let response = HttpResponse::new(
                 500,
                 "Failed to download audio".to_string(),
-                e.to_string()
+                format!("Download error: {}", e)
             );
             return (StatusCode::INTERNAL_SERVER_ERROR, Json(response)).into_response();
         }

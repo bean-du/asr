@@ -8,8 +8,10 @@ use axum::{
 use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
+use crate::web::Pagination;
 use crate::schedule::types::{TaskConfig,  TaskPriority};
 use crate::schedule::scheduler::TaskManager;
+use tracing::error;
 
 pub fn schedule_router(task_manager: Arc<TaskManager>) -> Router {
     Router::new()
@@ -56,10 +58,13 @@ async fn create_task(
             StatusCode::CREATED,
             Json(ApiResponse::success(task))
         ),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(e.to_string()))
-        ),
+        Err(e) => {
+            error!("Failed to create task: {}", e);
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse::error(e.to_string()))
+            )
+        },
     }
 }
 
@@ -77,10 +82,13 @@ async fn get_task(
             StatusCode::NOT_FOUND,
             Json(ApiResponse::error("Task not found".to_string()))
         ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::error(e.to_string()))
-        ),
+        Err(e) => {
+            error!("Failed to get task: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string()))
+            )
+        },
     }
 }
 
@@ -98,10 +106,13 @@ async fn get_task_status(
             StatusCode::NOT_FOUND,
             Json(ApiResponse::error("Task not found".to_string()))
         ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::error(e.to_string()))
-        ),
+        Err(e) => {
+            error!("Failed to get task status: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string()))
+            )
+        },
     }
 }
 
@@ -121,25 +132,32 @@ async fn update_task_priority(
             StatusCode::OK,
             Json(ApiResponse::<()>::success(()))
         ),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse::error(e.to_string()))
-        ),
+        Err(e) => {
+            error!("Failed to update task priority: {}", e);
+            (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse::error(e.to_string()))
+            )
+        },
     }
 }
 
 // Get task stats endpoint
 async fn get_task_stats(
     State(task_manager): State<Arc<TaskManager>>,
+    Path(pagination): Path<Pagination>,
 ) -> impl IntoResponse {
-    match task_manager.get_task_stats().await {
+    match task_manager.get_task_stats(&pagination).await {
         Ok(stats) => (
             StatusCode::OK,
             Json(ApiResponse::success(stats)),
         ),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::error(e.to_string()))
-        ),
+            Err(e) => {
+            error!("Failed to get task stats: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::error(e.to_string()))
+            )
+        },
     }
 } 

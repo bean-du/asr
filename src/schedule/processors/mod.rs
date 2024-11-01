@@ -4,6 +4,8 @@ use async_trait::async_trait;
 use anyhow::Result;
 use crate::schedule::types::{Task, TaskResult, TaskType, TaskParams};
 
+pub use transcribe::TranscribeProcessor;
+
 #[async_trait]
 pub trait TaskProcessor: Send + Sync {
     fn task_type(&self) -> TaskType;

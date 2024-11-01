@@ -61,7 +61,7 @@ impl TaskWorker {
                 task.status = TaskStatus::Completed;
                 task.completed_at = Some(Utc::now());
                 task.updated_at = Utc::now();
-                self.task_manager.storage().save_task(&task).await?;
+                self.task_manager.storage().create(&task.clone().into()).await?;
                 
                 // Let the task manager handle the callback
                 if let Err(e) = self.task_manager.handle_callback(&task).await {
@@ -75,7 +75,7 @@ impl TaskWorker {
                 let mut task = task;
                 task.status = TaskStatus::Failed(e.to_string());
                 task.updated_at = Utc::now();
-                self.task_manager.storage().save_task(&task).await?;
+                self.task_manager.storage().create(&task.into()).await?;
                 Ok(true)
             }
         }

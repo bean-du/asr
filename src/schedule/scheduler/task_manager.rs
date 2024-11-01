@@ -1,3 +1,5 @@
+#![warn(dead_code)]
+
 use std::sync::Arc;
 use std::collections::HashMap;
 use tokio::sync::Mutex;
@@ -16,9 +18,10 @@ use crate::schedule::processors::TaskProcessor;
 use crate::schedule::callback::{
     TaskCallback, HttpCallback, FunctionCallback, EventCallback,
 };
+use crate::web::Pagination;
 
 pub struct TaskManager {
-    storage: Arc<dyn TaskStorage>,
+    pub storage: Arc<dyn TaskStorage>,
     processors: HashMap<TaskType, Box<dyn TaskProcessor>>,
     processing_tasks: Mutex<HashMap<String, ProcessingInfo>>,
     function_callbacks: HashMap<String, Box<dyn TaskCallback>>,
@@ -73,8 +76,8 @@ impl TaskManager {
             error: None,
         };
 
+        self.storage.create(&task.clone().into()).await?;
         info!("Creating new task: {}", task.id);
-        self.storage.save_task(&task).await?;
         Ok(task)
     }
 
@@ -85,7 +88,7 @@ impl TaskManager {
         self.cleanup_stale_tasks(&mut processing).await?;
         
         // get pending tasks by priority
-        let pending_tasks = self.storage.get_pending_tasks(10).await?;
+        let pending_tasks = self.storage.get_pending_by_priority(10).await?;
         
         // process tasks by priority
         for task in pending_tasks {
@@ -100,14 +103,14 @@ impl TaskManager {
                 });
                 
                 // update task status in database
-                self.storage.update_task_status(&task.id, TaskStatus::Processing).await?;
+                self.storage.update(&task.id, &TaskStatus::Processing.to_string()).await?;
                 
                 // record task start time
                 let mut task = task;
                 task.started_at = Some(Utc::now());
-                self.storage.save_task(&task).await?;
+                self.storage.create(&task.clone().into()).await?;
                 
-                return Ok(Some(task));
+                return Ok(Some(task.into()));
             }
         }
 
@@ -141,14 +144,11 @@ impl TaskManager {
                 info.attempts += 1;
                 warn!("Retrying task {} (attempt {}/{})", task.id, info.attempts, task.config.max_retries);
                 
-                self.storage.update_task_status(&task.id, TaskStatus::Retrying).await?;
+                self.storage.update(&task.id, &TaskStatus::Retrying.to_string()).await?;
             } else {
                 error!("Task {} failed after {} attempts", task.id, info.attempts);
                 
-                self.storage.update_task_status(
-                    &task.id, 
-                    TaskStatus::Failed(error.to_string())
-                ).await?;
+                self.storage.update(&task.id, &TaskStatus::Failed(error.to_string()).to_string()).await?;
                 
                 processing.remove(&task.id);
             }
@@ -171,7 +171,7 @@ impl TaskManager {
 
         for task_id in to_remove {
             processing.remove(&task_id);
-            self.storage.update_task_status(&task_id, TaskStatus::TimedOut).await?;
+            self.storage.update(&task_id, &TaskStatus::TimedOut.to_string()).await?;
         }
 
         Ok(())
@@ -179,15 +179,16 @@ impl TaskManager {
 
     // task status query method
     pub async fn get_task_status(&self, task_id: &str) -> Result<Option<TaskStatus>> {
-        Ok(self.storage.get_task(task_id).await?.map(|t| t.status))
+        Ok(self.storage.get(task_id).await?.map(|t| TaskStatus::try_from(t.status).unwrap()))
     }
 
     // task stats method
-    pub async fn get_task_stats(&self) -> Result<TaskStats> {
-        let all_tasks = self.storage.get_all_tasks().await?;
+    pub async fn get_task_stats(&self, pagination: &Pagination) -> Result<TaskStats> {
+        let all_tasks = self.storage.list(pagination).await?;
         let mut stats = TaskStats::default();
 
-        for task in all_tasks {
+        for model in all_tasks {
+            let task = Task::from(model);
             match task.status {
                 TaskStatus::Pending => stats.pending += 1,
                 TaskStatus::Processing => stats.processing += 1,
@@ -207,13 +208,13 @@ impl TaskManager {
         let mut stats = CleanupStats::default();
 
         // clean up completed tasks
-        stats.completed = self.storage.cleanup_old_tasks(cutoff).await?;
+        stats.completed = self.storage.cleanup_old(cutoff).await?;
 
         // clean up failed tasks
-        let failed_tasks = self.storage.get_tasks_by_status(TaskStatus::Failed("".into())).await?;
+        let failed_tasks = self.storage.get_by_status(&TaskStatus::Failed("".into()).to_string()).await?;
         for task in failed_tasks {
             if task.updated_at < cutoff {
-                self.storage.delete_task(&task.id).await?;
+                self.storage.delete(&task.id).await?;
                 stats.failed += 1;
             }
         }
@@ -271,11 +272,11 @@ impl TaskManager {
     }
 
     pub async fn handle_timed_out_tasks(&self) -> Result<()> {
-        let timed_out_tasks = self.storage.get_timed_out_tasks().await?;
+        let timed_out_tasks = self.storage.get_timeouted().await?;
         
         for task in timed_out_tasks {
             info!("Handling timed out task: {}", task.id);
-            self.storage.update_task_status(&task.id, TaskStatus::TimedOut).await?;
+            self.storage.update(&task.id, &TaskStatus::TimedOut.to_string()).await?;
         }
         
         Ok(())
@@ -283,28 +284,31 @@ impl TaskManager {
 
     // get task method
     pub async fn get_task(&self, task_id: &str) -> Result<Option<Task>> {
-        self.storage.get_task(task_id).await
+        let model = self.storage.get(task_id).await?;
+        Ok(model.map(|m| Task::from(m)))
     }
 
     // update task priority method
     pub async fn update_task_priority(&self, task_id: &str, new_priority: TaskPriority) -> Result<()> {
-        let mut task = self.storage.get_task(task_id).await?
+        let model = self.storage.get(task_id).await?
             .ok_or_else(|| anyhow::anyhow!("Task not found"))?;
-        
+        let task = Task::from(model);
+
         // only allow to adjust priority of pending tasks
         if task.status != TaskStatus::Pending {
             return Err(anyhow::anyhow!("Can only adjust priority of pending tasks"));
         }
         
+        let mut task = task.clone();
         task.config.priority = new_priority;
         task.updated_at = Utc::now();
         
-        self.storage.save_task(&task).await
+        self.storage.create(&task.clone().into()).await
     }
 
     // get timed out tasks method
     pub async fn get_timed_out_tasks(&self) -> Result<Vec<Task>> {
-        self.storage.get_timed_out_tasks().await
+        self.storage.get_timeouted().await.map(|models| models.into_iter().map(|m| Task::from(m)).collect())
     }
 }
 
